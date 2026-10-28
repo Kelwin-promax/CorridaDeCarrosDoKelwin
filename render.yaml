@@ -1,0 +1,12 @@
+# Blueprint do Render: cria um Web Service Node que serve o jogo e o WebSocket.
+services:
+  - type: web
+    name: grand-prix-do-kelwin
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20

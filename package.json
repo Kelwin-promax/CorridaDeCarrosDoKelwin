@@ -1,0 +1,17 @@
+{
+  "name": "grand-prix-do-kelwin",
+  "version": "1.0.0",
+  "description": "Jogo de corrida 3D multiplayer (salas por pista) com Three.js e WebSocket",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "4.21.2",
+    "ws": "8.18.0"
+  }
+}
