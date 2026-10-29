@@ -1,7 +1,7 @@
 {
-  "name": "grand-prix-do-kelwin",
+  "name": "overdrive-rivals",
   "version": "1.0.0",
-  "description": "Jogo de corrida 3D multiplayer (salas por pista) com Three.js e WebSocket",
+  "description": "Overdrive Rivals: jogo de corrida 3D multiplayer (crie ou entre numa sala) com Three.js e WebSocket",
   "main": "server.js",
   "private": true,
   "scripts": {

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<base href="/">
+<title>Miniaturas dos carros</title>
+<style>
+  body { background:#14161d; color:#ddd; font:14px system-ui; margin:16px; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+  figure { margin:0; background:linear-gradient(160deg,#2d4f8f,#101a33); border-radius:6px; padding:4px; }
+  figure img { width:100%; display:block; }
+  figcaption { font-size:12px; padding:2px 4px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<p id="status">Gerando...</p>
+<div id="grid"></div>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { CARS, thumbOf } from '/js/data.js';
+import { spawnCar } from '/js/cars.js';
+
+const W = 640, H = 360;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H);
+renderer.setClearColor(0x000000, 0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const key = new THREE.DirectionalLight(0xffffff, 2);
+key.position.set(4, 8, 6);
+scene.add(key, new THREE.HemisphereLight(0xffffff, 0x333344, 0.6));
+const camera = new THREE.PerspectiveCamera(26, W / H, 0.1, 100);
+camera.position.set(5.2, 2.0, 7.4);
+camera.lookAt(0, 0.55, 0);
+
+// ?only=parte-do-nome gera só alguns carros
+const only = new URLSearchParams(location.search).get('only');
+const list = CARS.filter(c => !only || c.id.includes(only));
+for (const [i, c] of list.entries()) {
+  document.querySelector('#status').textContent = `Gerando ${i + 1}/${list.length}: ${c.brand} ${c.name}`;
+  const car = await spawnCar(c.id);
+  scene.add(car);
+  renderer.render(scene, camera);
+  scene.remove(car);
+  const blob = await new Promise(ok => renderer.domElement.toBlob(ok, 'image/webp', 0.9));
+  const name = thumbOf(c.id).split('/').pop();
+  await fetch('/__thumbs/save/' + name, { method: 'POST', body: blob });
+  document.querySelector('#grid').insertAdjacentHTML('beforeend',
+    `<figure><img src="${URL.createObjectURL(blob)}"><figcaption>${c.brand} ${c.name} — ${c.id}</figcaption></figure>`);
+}
+document.querySelector('#status').textContent = `Pronto: ${list.length} miniaturas em public/thumbs`;
+</script>
+</body>
+</html>

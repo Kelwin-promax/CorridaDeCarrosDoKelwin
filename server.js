@@ -1,58 +1,68 @@
 'use strict';
 // Servidor do jogo: entrega os arquivos de public/ e sincroniza os pilotos via WebSocket.
-// Cada pista é uma sala. Fluxo de uma corrida:
+// Os jogadores criam salas (escolhendo a pista) ou entram numa sala existente pelo código.
+// Fluxo de uma corrida:
 //   waiting -> (anfitrião clica Iniciar) preparing -> (todos carregaram) countdown -> racing -> results -> waiting
+const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
-const ROOMS = ['monza', 'silverstone', 'suzuka', 'interlagos', 'monaco'];
+const PUBLIC = path.join(__dirname, 'public');
+const TRACKS = { spa: { laps: 2 }, motegi: { laps: 2 }, hg: { laps: 4 } };   // mesmas voltas de public/js/data.js
+// Carros válidos: todos os .glb de public/ e de public/NewCars
 const CARS = new Set([
-  '2019_lamborghini_sc18_alston.glb', '2021_lamborghini_countach_lpi_800-4.glb', '2026_ferrari_296_speciale_a.glb',
-  '2026_ferrari_849_testarossa.glb', '3d_model_supercar_gt.glb', '3d_model_supercar_mclaren_765lt_vr_ready.glb',
-  'cavallo_458_speciale.glb', 'generic_supercar.glb', 'lamborghini_revuelto.glb', 'lamborghini_v12_vision_gt.glb',
-  'pagani_huayra_bc.glb', 'supercar.glb', 'supercar_like_lamborghini.glb',
+  ...fs.readdirSync(PUBLIC).filter(f => f.endsWith('.glb')),
+  ...fs.readdirSync(path.join(PUBLIC, 'NewCars')).filter(f => f.endsWith('.glb')).map(f => 'NewCars/' + f),
 ]);
-const LAPS = 3;
 const MAX_PLAYERS = 8;
+const MAX_ROOMS = 60;
 const SAMPLES = 1500;                 // mesmo valor do cliente (usado só para ordenar quem não terminou)
-const PREPARE_TIMEOUT_MS = 60000;     // tempo máximo esperando todos carregarem os carros
+const PREPARE_TIMEOUT_MS = 90000;     // tempo máximo esperando todos carregarem pista e carros
 const COUNTDOWN_MS = 4600;            // duração do semáforo até o verde
 const FINISH_GRACE_MS = 45000;        // depois do 1º chegar, os outros têm esse tempo para terminar
-const MAX_RACE_MS = 10 * 60 * 1000;
+const MAX_RACE_MS = 15 * 60 * 1000;
 const TICK_MS = 50;                   // envio das posições (20 vezes por segundo)
 
 const app = express();
 app.get('/healthz', (req, res) => res.send('ok'));
-app.use(express.static(path.join(__dirname, 'public'), {
+app.use(express.static(PUBLIC, {
   maxAge: '7d',
-  setHeaders(res, file) { if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); },
+  setHeaders(res, file) { if (/\.(html|js|css|json)$/.test(file)) res.setHeader('Cache-Control', 'no-cache'); },
 }));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 2048 });
 
-const rooms = new Map(ROOMS.map(id => [id, { id, phase: 'waiting', players: new Map(), hostId: null, startAt: 0, timers: [] }]));
+const rooms = new Map();   // código -> sala
 let nextId = 1;
 
 const cleanName = s => String(s ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 16) || 'Piloto';
 const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+function newCode() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let code;
+  do code = Array.from({ length: 4 }, () => A[Math.floor(Math.random() * A.length)]).join(''); while (rooms.has(code));
+  return code;
+}
 
 function send(ws, msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); }
 function broadcast(room, msg) {
   const s = JSON.stringify(msg);
   for (const p of room.players.values()) if (p.ws.readyState === 1) p.ws.send(s);
 }
-const roomList = () => [...rooms.values()].map(r => ({ id: r.id, count: r.players.size, phase: r.phase }));
+const roomList = () => [...rooms.values()].map(r => ({
+  code: r.code, track: r.track, count: r.players.size, phase: r.phase, host: r.players.get(r.hostId)?.name ?? '',
+}));
 function broadcastRooms() {
   const s = JSON.stringify({ type: 'rooms', rooms: roomList() });
   for (const c of wss.clients) if (c.readyState === 1) c.send(s);
 }
 function lobby(room) {
   return {
-    type: 'lobby', room: room.id, phase: room.phase, hostId: room.hostId,
+    type: 'lobby', room: room.code, track: room.track, laps: room.laps, phase: room.phase, hostId: room.hostId,
     players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, carId: p.carId, racing: p.racing })),
   };
 }
@@ -73,7 +83,7 @@ function prepareRace(room) {
     Object.assign(p, { racing: true, ready: false, finished: false, finishT: null, lap: -1, idx: 0, x: null, slot });
     return { id: p.id, name: p.name, carId: p.carId, slot };
   });
-  broadcast(room, { type: 'prepare', laps: LAPS, grid });
+  broadcast(room, { type: 'prepare', laps: room.laps, grid });
   broadcast(room, lobby(room));
   broadcastRooms();
   later(room, PREPARE_TIMEOUT_MS, () => beginCountdown(room));
@@ -114,7 +124,13 @@ function leave(client) {
   room.players.delete(client.id);
   client.room = null;
   client.racing = false;
-  if (room.hostId === client.id) room.hostId = room.players.keys().next().value ?? null;
+  if (!room.players.size) {
+    clearTimers(room);
+    rooms.delete(room.code);
+    broadcastRooms();
+    return;
+  }
+  if (room.hostId === client.id) room.hostId = room.players.keys().next().value;
   if (room.phase !== 'waiting') {
     const rs = racers(room);
     if (!rs.length) resetRoom(room);
@@ -125,22 +141,36 @@ function leave(client) {
   broadcastRooms();
 }
 
+function enter(client, room, m) {
+  Object.assign(client, { name: cleanName(m.name), carId: m.carId, racing: false, ready: false, finished: false, room: room.code });
+  room.players.set(client.id, client);
+  if (!room.hostId) room.hostId = client.id;
+  broadcast(room, lobby(room));
+  broadcastRooms();
+}
+
 function handle(client, m) {
   const room = client.room && rooms.get(client.room);
   switch (m?.type) {
-    case 'join': {
-      const target = rooms.get(m.room);
-      if (!target) return;
+    case 'create': {
+      if (!TRACKS[m.track]) return;
       if (!CARS.has(m.carId)) return send(client.ws, { type: 'error', text: 'Carro inválido.' });
-      if (client.room !== target.id) {
+      leave(client);
+      if (rooms.size >= MAX_ROOMS) return send(client.ws, { type: 'error', text: 'Muitas salas abertas. Entre numa sala existente.' });
+      const r = { code: newCode(), track: m.track, laps: TRACKS[m.track].laps, phase: 'waiting', players: new Map(), hostId: null, startAt: 0, timers: [] };
+      rooms.set(r.code, r);
+      enter(client, r, m);
+      break;
+    }
+    case 'join': {
+      if (!CARS.has(m.carId)) return send(client.ws, { type: 'error', text: 'Carro inválido.' });
+      const target = rooms.get(String(m.room ?? '').toUpperCase());
+      if (!target) return send(client.ws, { type: 'error', text: 'Sala não encontrada. Confira o código.' });
+      if (client.room !== target.code) {
         leave(client);
         if (target.players.size >= MAX_PLAYERS) return send(client.ws, { type: 'error', text: 'Sala cheia. Escolha outra.' });
       }
-      Object.assign(client, { name: cleanName(m.name), carId: m.carId, racing: false, ready: false, finished: false, room: target.id });
-      target.players.set(client.id, client);
-      if (!target.hostId) target.hostId = client.id;
-      broadcast(target, lobby(target));
-      broadcastRooms();
+      enter(client, target, m);
       break;
     }
     case 'leave':
@@ -162,8 +192,8 @@ function handle(client, m) {
       }
       break;
     case 'finish':
-      if (room && room.phase === 'racing' && client.racing && !client.finished && Math.trunc(num(m.lap)) >= LAPS) {
-        client.lap = LAPS;
+      if (room && room.phase === 'racing' && client.racing && !client.finished && Math.trunc(num(m.lap)) >= room.laps) {
+        client.lap = room.laps;
         client.finished = true;
         client.finishT = (Date.now() - room.startAt) / 1000;
         broadcast(room, { type: 'finished', id: client.id, time: client.finishT });
@@ -185,7 +215,7 @@ wss.on('connection', ws => {
     handle(client, m);
   });
   ws.on('close', () => leave(client));
-  send(ws, { type: 'welcome', id: client.id, laps: LAPS, rooms: roomList() });
+  send(ws, { type: 'welcome', id: client.id, rooms: roomList() });
 });
 
 // Posições de todos os pilotos de cada sala em corrida
