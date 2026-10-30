@@ -11,7 +11,7 @@ const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
-const TRACKS = { spa: { laps: 2 }, motegi: { laps: 2 }, hg: { laps: 4 } };   // mesmas voltas de public/js/data.js
+const TRACKS = { motegi: { laps: 2 }, hg: { laps: 4 } };   // mesmas voltas de public/js/data.js
 // Carros válidos: todos os .glb de public/ e de public/NewCars
 const CARS = new Set([
   ...fs.readdirSync(PUBLIC).filter(f => f.endsWith('.glb')),

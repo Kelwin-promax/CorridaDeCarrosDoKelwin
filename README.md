@@ -20,6 +20,7 @@ public/
     results.js       pódio
     data.js          lista de carros e pistas
     tracks.js        pistas 3D e traçado
+    surface.js       física contra a malha da pista: altura do chão e muros
     cars.js          carregamento dos carros
     showroom.js      palco 3D dos menus
     engine.js        renderizador, cena e luzes
@@ -27,7 +28,7 @@ public/
     util.js          utilidades
   media/intro.mp4    vídeo de abertura
   *.glb, NewCars/    modelos dos carros
-  RaceTracks/        modelos das pistas (Spa-Francorchamps, Motegi, HG Circuit)
+  RaceTracks/        modelos das pistas (Motegi, HG Circuit)
   tracks/*.json      traçado de cada pista (gerado por tools/track-centerline.js)
   thumbs/*.webp      miniaturas da garagem (geradas por tools/make-thumbs.js)
 tools/               ferramentas para gerar traçados e miniaturas
@@ -68,7 +69,7 @@ Abra http://localhost:3000. Para testar o multiplayer, abra duas abas: numa dela
   `node tools/make-thumbs.js` e abra http://localhost:3001/__thumbs/?only=nome-do-arquivo
 - **Pista:** coloque o `.glb` em `public/RaceTracks/`, configure as malhas do asfalto e os pontos de passagem em
   `tools/track-centerline.js`, rode `node tools/track-centerline.js <id> --debug` (confira a imagem em `tools/out/`)
-  e adicione a pista em `TRACKS` (`public/js/data.js`) e no `server.js`.
+  e adicione a pista em `TRACKS` (`public/js/data.js`, com os materiais de asfalto, chão e muros) e no `server.js`.
 
 ## Publicar no Render
 

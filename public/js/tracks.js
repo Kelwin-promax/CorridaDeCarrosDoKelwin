@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { TRACKS, SAMPLES } from './data.js';
 import { gltfLoader } from './cars.js';
 import { canvasTex } from './engine.js';
+import { buildSurface } from './surface.js';
 
-export const RUNOFF = 4;   // área de escape além da borda do asfalto até o muro invisível
+export const RUNOFF = 6;   // área de escape além da borda do asfalto até o muro invisível
 
 // Lê o traçado extraído (public/tracks/<id>.json) e reamostra em SAMPLES pontos já em escala
 async function makeTrack(def) {
@@ -12,17 +13,14 @@ async function makeTrack(def) {
   const k = def.scale;
   const pts = json.points.map(p => new THREE.Vector3(p[0] * k, p[1] * k, p[2] * k));
   const widths = json.points.map(p => p[3] * k);
-  const typical = json.halfWidth * k;
   const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
   const samples = [];
   for (let i = 0; i < SAMPLES; i++) {
     const u = i / SAMPLES;
-    const t3 = curve.getTangentAt(u);
-    const t = t3.clone().setY(0).normalize();
+    const t = curve.getTangentAt(u).setY(0).normalize();
     const f = u * widths.length, a = Math.floor(f) % widths.length, b = (a + 1) % widths.length;
-    // largura de cada ponto, sem deixar áreas largas (boxes, cruzamentos) virarem pista gigante
-    const w = THREE.MathUtils.clamp(widths[a] + (widths[b] - widths[a]) * (f - Math.floor(f)), typical * 0.8, typical * 1.5);
-    samples.push({ i, p: curve.getPointAt(u), t, n: new THREE.Vector3(t.z, 0, -t.x), h: Math.atan2(t.x, t.z), w, slope: t3.y / Math.hypot(t3.x, t3.z) });
+    const w = widths[a] + (widths[b] - widths[a]) * (f - Math.floor(f));
+    samples.push({ i, p: curve.getPointAt(u), t, n: new THREE.Vector3(t.z, 0, -t.x), h: Math.atan2(t.x, t.z), w });
   }
   let length = 0;
   for (let i = 0; i < SAMPLES; i++) { samples[i].d = length; length += samples[i].p.distanceTo(samples[(i + 1) % SAMPLES].p); }
@@ -33,7 +31,11 @@ async function makeTrack(def) {
     if (sharp && !inCurve) curves++;
     inCurve = sharp;
   }
-  return { ...def, laps: def.voltas, samples, length, curves };
+  // direção da reta de largada, medida numa base longa para não pegar ondulações do traçado
+  const back = samples[Math.floor((1 - 60 / length) * SAMPLES)].p, line = samples[0].p;
+  const fwd = new THREE.Vector2(line.x - back.x, line.z - back.z).normalize();
+  const startDir = { x: fwd.x, z: fwd.y, nx: fwd.y, nz: -fwd.x, h: Math.atan2(fwd.x, fwd.y) };
+  return { ...def, laps: def.voltas, samples, length, curves, startDir };
 }
 
 export const TRACK_OBJS = new Map();
@@ -57,12 +59,14 @@ export function nearestIdx(track, x, z, prev) {
   return best;
 }
 
-// Altura do asfalto em (x, z), interpolando entre a amostra mais próxima e a seguinte
-export function groundAt(track, x, z, idx) {
-  const a = track.samples[idx], b = track.samples[(idx + 1) % SAMPLES];
-  const seg = a.p.distanceTo(b.p) || 1;
-  const u = THREE.MathUtils.clamp(((x - a.p.x) * a.t.x + (z - a.p.z) * a.t.z) / seg, -1, 2);
-  return a.p.y + (b.p.y - a.p.y) * u;
+// Lugar no grid de largada: duas filas desencontradas, todos paralelos à reta antes da linha
+const GRID_FIRST = 7, GRID_ROW = 9, GRID_STAGGER = 4.5, GRID_LAT = 3.5;
+export function gridSlot(track, slot) {
+  const s0 = track.samples[0], dir = track.startDir;
+  const col = slot % 2 ? 1 : -1;
+  const dist = GRID_FIRST + Math.floor(slot / 2) * GRID_ROW + (slot % 2) * GRID_STAGGER;
+  const x = s0.p.x - dir.x * dist + dir.nx * col * GRID_LAT, z = s0.p.z - dir.z * dist + dir.nz * col * GRID_LAT;
+  return { x, z, h: dir.h, s: sampleAt(track, -dist) };
 }
 
 // ---------- Cenário 3D ----------
@@ -81,6 +85,7 @@ export function loadTrackScene(track, onProgress) {
           // texturas com transparência (árvores, grades) sem borda preta
           for (const m of mats) if (m.map && m.transparent) { m.alphaTest = 0.4; m.transparent = false; m.depthWrite = true; }
         });
+        track.surface = buildSurface(track, g.scene);
         root.add(g.scene);
         ok(root);
       }, e => e.total && onProgress?.(e.loaded / e.total), () => {
@@ -111,11 +116,12 @@ export async function buildTrackGroup(track, onProgress) {
   ground.receiveShadow = true;
   g.add(ground);
 
-  // Pórtico de largada com as luzes do semáforo
+  // Pórtico de largada com as luzes do semáforo, com as hastes fora do asfalto
   const s0 = S[0];
+  const { plus, minus } = track.surface.start;
   const gantry = new THREE.Group();
   const metal = new THREE.MeshStandardMaterial({ color: 0x22252c, metalness: 0.7, roughness: 0.4 });
-  const span = s0.w + 2;
+  const span = (plus + minus) / 2 + 1.5;
   for (const sx of [-1, 1]) {
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.6, 9, 0.6), metal);
     post.position.set(sx * span, 4.5, 0);
@@ -141,8 +147,9 @@ export async function buildTrackGroup(track, onProgress) {
     gantry.add(lamp);
     lamps.push(lamp);
   }
-  gantry.position.copy(s0.p);
-  gantry.rotation.y = s0.h;
+  const { nx, nz, h } = track.startDir;
+  gantry.position.set(s0.p.x + nx * (plus - minus) / 2, s0.p.y, s0.p.z + nz * (plus - minus) / 2);
+  gantry.rotation.y = h;
   g.add(gantry);
 
   return { group: g, lamps };

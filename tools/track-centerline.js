@@ -10,21 +10,18 @@ const path = require('path');
 const { load, png } = require('./glb');
 
 // road: malhas do asfalto (regex sobre "material malha"); way: pontos de passagem [x, z] no sentido da corrida.
-// O primeiro ponto de passagem é a linha de largada.
+// start: posição [x, z] da linha de largada.
 const TRACKS = {
-  spa: {
-    file: 'circuit_de_spa-francorchamps_1992_layout.glb',
-    road: /Meshesroadroad(1x|2x|3x|rold|jx|grdx|b0)|rmbl[bc]/i,
-    way: [[3766, -3920], [3957, -4555], [3935, -5232], [3825, -5545], [4342, -4682], [4697, -3751], [4824, -2820], [4993, -1974], [4976, -1044], [4824, -113], [4697, 1156], [4232, 2680], [3724, 4203], [3301, 5260], [2962, 5303], [2751, 5641], [2539, 6064], [1609, 6132], [678, 6132], [466, 5853], [847, 5616], [1524, 5573], [1820, 5133], [2032, 4372], [2370, 3526], [2624, 2933], [2370, 2426], [1609, 2130], [847, 2510], [85, 3018], [-422, 3314], [-761, 3103], [-1099, 2722], [-1691, 2764], [-2453, 3145], [-2918, 2680], [-2961, 2087], [-2538, 1622], [-1691, 1258], [-676, 1114], [339, 1258], [1185, 1072], [2032, 480], [2370, -367], [2666, -1297], [3005, -2101], [3385, -2694], [3682, -3244]],
-  },
   motegi: {
     file: 'mobility_resort_motegi_twin_ring.glb',
     road: /^(ROAD|RMBL|ROADGRID|SFLINE)\.002 /i,
+    start: [-737586, 197241],   // faixa de largada do modelo (SFLINE)
     way: [[-741640, 188893], [-884993, 195264], [-969942, 176150], [-975251, 112438], [-853137, 85892], [-693856, 61469], [-534576, 40231], [-439008, 27489], [-385915, 6252], [-391224, -46842], [-417771, -99935], [-534576, -78698], [-746950, -30914], [-906230, 11561], [-991179, -4367], [-980561, -99935], [-916849, -216740], [-800043, -275143], [-662000, -282576], [-577051, -296380], [-529267, -376020], [-492102, -434423], [-439008, -434423], [-354059, -386639], [-253182, -333546], [-216016, -354783], [-231944, -460970], [-269110, -758293], [-242563, -747674], [-205398, -620250], [-141686, -354783], [-77973, -142410], [-46117, 6252], [-88592, 25365], [-237254, 29613], [-290347, 69964], [-322203, 123057], [-343440, 181460], [-534576, 188893]],
   },
   hg: {
     file: 'penny_racers_ps2_-_hg_circuit_long.glb',
-    road: /^(road_m|rd_01_m|rd_02_m|rd_03_m) /i,
+    road: /^(road_m|rd_01_m|rd_02_m|rd_03_m|rd_sb1_m|rd_sb2_m|road_023) /i,
+    start: [-136, -274],        // sob o pórtico do modelo
     way: [[-136, -274], [-21, -274], [61, -274], [94, -241], [143, -167], [176, -118], [167, -69], [126, -54], [114, -36], [130, -3], [143, 59], [139, 120], [114, 182], [77, 227], [73, 284], [44, 309], [-21, 315], [-91, 292], [-116, 223], [-99, 161], [-62, 120], [-58, 71], [-95, 22], [-112, -7], [-95, -60], [-87, -101], [-54, -126], [-13, -142], [20, -159], [28, -188], [-5, -196], [-46, -185], [-71, -175], [-124, -179], [-202, -179], [-251, -200], [-255, -241], [-226, -274]],
   },
 };
@@ -65,6 +62,66 @@ function raster(meshes, re) {
     if (!road[i] && road[i - 1] + road[i + 1] + road[i - W] + road[i + W] >= 3) road[i] = 2;
   }
   return { W, H, x0, z0, cell, road, hgt };
+}
+
+// Todas as alturas do asfalto em cada ponto (x, z), para seguir o nível certo onde há pontes e túneis
+function heightProbe(meshes, re) {
+  const cells = new Map();
+  const sel = meshes.filter(m => re.test(m.mat + ' ' + m.mesh));
+  let size = 0;
+  for (const m of sel) for (let k = 0; k < m.pos.length; k += 3) size = Math.max(size, Math.abs(m.pos[k]), Math.abs(m.pos[k + 2]));
+  const c = size / 64;
+  for (const m of sel) for (let t = 0; t < m.idx.length; t += 3) {
+    const v = [0, 1, 2].map(q => { const i = m.idx[t + q] * 3; return [m.pos[i], m.pos[i + 1], m.pos[i + 2]]; });
+    const xa = Math.floor(Math.min(v[0][0], v[1][0], v[2][0]) / c), xb = Math.floor(Math.max(v[0][0], v[1][0], v[2][0]) / c);
+    const za = Math.floor(Math.min(v[0][2], v[1][2], v[2][2]) / c), zb = Math.floor(Math.max(v[0][2], v[1][2], v[2][2]) / c);
+    for (let x = xa; x <= xb; x++) for (let z = za; z <= zb; z++) {
+      const key = x + ',' + z;
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(v);
+    }
+  }
+  return (x, z) => {
+    const out = [];
+    for (const [a, b, d] of cells.get(Math.floor(x / c) + ',' + Math.floor(z / c)) || []) {
+      const det = (b[2] - d[2]) * (a[0] - d[0]) + (d[0] - b[0]) * (a[2] - d[2]);
+      if (Math.abs(det) < 1e-9) continue;
+      const w0 = ((b[2] - d[2]) * (x - d[0]) + (d[0] - b[0]) * (z - d[2])) / det;
+      const w1 = ((d[2] - a[2]) * (x - d[0]) + (a[0] - d[0]) * (z - d[2])) / det;
+      if (w0 < -1e-4 || w1 < -1e-4 || 1 - w0 - w1 < -1e-4) continue;
+      out.push(w0 * a[1] + w1 * b[1] + (1 - w0 - w1) * d[1]);
+    }
+    return out;
+  };
+}
+
+// Leva cada ponto para o meio real do asfalto e mede a meia largura até a borda mais próxima
+function recenter(g, pts, ref) {
+  const n = pts.length;
+  const spacing = pts.reduce((sum, p, i) => sum + Math.hypot(p[0] - pts[(i + 1) % n][0], p[2] - pts[(i + 1) % n][2]), 0) / n;
+  const cap = ref * g.cell * 2.4;    // junções e boxes não contam como pista
+  const onRoad = (x, z) => {
+    const cx = Math.floor((x - g.x0) / g.cell), cy = Math.floor((z - g.z0) / g.cell);
+    return cx >= 0 && cy >= 0 && cx < g.W && cy < g.H && g.road[cy * g.W + cx];
+  };
+  const measure = list => list.map((p, i) => {
+    const a = list[(i - 2 + n) % n], b = list[(i + 2) % n], len = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1;
+    const nx = (b[2] - a[2]) / len, nz = -(b[0] - a[0]) / len;
+    const scan = s => { let t = 0; while (t < cap && onRoad(p[0] + nx * s * t, p[2] + nz * s * t)) t += g.cell / 2; return t; };
+    return { nx, nz, l: scan(1), r: scan(-1) };
+  });
+  const box = (vals, win) => vals.map((_, i) => {
+    let s = 0;
+    for (let k = -win; k <= win; k++) s += vals[(i + k + n) % n];
+    return s / (2 * win + 1);
+  });
+  const win = Math.max(4, Math.round(ref * g.cell * 6 / spacing));
+  const m = measure(pts);
+  const off = box(box(m.map(e => (e.l - e.r) / 2), win), win);
+  const moved = pts.map((p, i) => [p[0] + m[i].nx * off[i], p[1], p[2] + m[i].nz * off[i], p[3]]);
+  const widths = box(measure(moved).map(e => Math.min(e.l, e.r)), 1);
+  moved.forEach((p, i) => { p[3] = widths[i]; });
+  return moved;
 }
 
 // Distância (em células) até a borda do asfalto, chanfro 3-4
@@ -173,13 +230,28 @@ function build(id, debug) {
   // reamostra com espaçamento constante
   const cum = [0];
   for (let i = 1; i <= n; i++) { const a = sm[i - 1], b = sm[i % n]; cum.push(cum[i - 1] + Math.hypot(b[0] - a[0], b[2] - a[2])); }
-  const L = cum[n], out = [];
+  const L = cum[n];
+  let out = [];
   for (let k = 0, j = 0; k < POINTS; k++) {
     const t = (k / POINTS) * L;
     while (cum[j + 1] < t) j++;
     const a = sm[j], b = sm[(j + 1) % n], u = (t - cum[j]) / (cum[j + 1] - cum[j] || 1);
-    out.push(a.map((v, c) => +(v + (b[c] - v) * u).toFixed(3)));
+    out.push(a.map((v, c) => v + (b[c] - v) * u));
   }
+  out = recenter(g, out, ref);
+  // começa exatamente na linha de largada
+  let first = 0, bestD = Infinity;
+  out.forEach((p, i) => { const q = Math.hypot(p[0] - def.start[0], p[2] - def.start[1]); if (q < bestD) { bestD = q; first = i; } });
+  out = out.slice(first).concat(out.slice(0, first));
+  // altura real do asfalto, seguindo sempre o nível em que o carro já está
+  const probe = heightProbe(meshes, def.road);
+  let level = out[0][1];
+  const levels = out.map(p => {
+    const hs = probe(p[0], p[2]);
+    if (hs.length) level = hs.reduce((a, h) => Math.abs(h - level) < Math.abs(a - level) ? h : a);
+    return level;
+  });
+  out = out.map((p, i) => [p[0], (levels[(i - 1 + POINTS) % POINTS] + levels[i] * 2 + levels[(i + 1) % POINTS]) / 4, p[2], p[3]].map(v => +v.toFixed(3)));
   const file = path.join(__dirname, '..', 'public', 'tracks', id + '.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ length: +L.toFixed(2), halfWidth: +(ref * g.cell).toFixed(3), points: out }));

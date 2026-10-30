@@ -5,7 +5,8 @@ import { CARS, SAMPLES, CAR_RADIUS, CAR_FORWARD_OFFSET, carOf } from './data.js'
 import { scene, camera, sun, hemi, skyBg, setShadowArea } from './engine.js';
 import { menuRoot } from './showroom.js';
 import { spawnCar } from './cars.js';
-import { TRACK_OBJS, sampleAt, nearestIdx, groundAt, buildTrackGroup, trackPath, strokeTrack, RUNOFF } from './tracks.js';
+import { TRACK_OBJS, sampleAt, nearestIdx, gridSlot, buildTrackGroup, trackPath, strokeTrack, RUNOFF } from './tracks.js';
+import { surfaceAt, hitWalls } from './surface.js';
 import { state, net, nav, show, goto, sendNet, onNet } from './state.js';
 
 const keys = { up: false, down: false, left: false, right: false };
@@ -35,13 +36,13 @@ let raceToken = 0;
 const statsOf = id => carOf(id) ?? CARS[0];
 
 function newRacer(g, obj, slot, track) {
-  const s = sampleAt(track, -8 - slot * 10);      // grid de largada atrás da linha
-  const lat = slot % 2 ? 3.2 : -3.2;
+  const { x, z, h, s } = gridSlot(track, slot);   // grid de largada atrás da linha
   const st = statsOf(g.carId);
+  const idx = nearestIdx(track, x, z, s.i);
   return {
     id: g.id, name: g.name, me: g.id === net.id, carId: g.carId, obj,
-    x: s.p.x + s.n.x * lat, z: s.p.z + s.n.z * lat, y: s.p.y, h: s.h, v: 0,
-    idx: s.i, lap: -1, lat, s,
+    x, z, y: s.p.y, h, v: 0, pitch: 0, roll: 0, road: true,
+    idx, lap: -1, lat: 0, s: track.samples[idx],
     maxV: 80 + st.spd * 14,
     accel: 30 + st.acc * 22,
     steerRate: 1.5 + st.ctl * 0.8,
@@ -182,11 +183,30 @@ const order = R => {
   return [...R.racers].sort((a, b) => key(b) - key(a));
 };
 
-// Física comum: aplica a direção (heading) e a velocidade, e acompanha a pista
+// Física comum: aplica a direção (heading) e a velocidade, em passos curtos para não atravessar muros
+const MAX_STEP = 0.6;
 function move(r, dt, R) {
+  const steps = Math.max(1, Math.ceil(Math.abs(r.v) * dt / MAX_STEP));
+  for (let i = 0; i < steps; i++) moveStep(r, dt / steps, R);
+}
+
+function moveStep(r, dt, R) {
   const fx = Math.sin(r.h), fz = Math.cos(r.h);
   r.x += fx * r.v * dt;
   r.z += fz * r.v * dt;
+
+  const hit = hitWalls(R.track.surface, r);
+  if (hit) {
+    // perde velocidade conforme o ângulo da batida e escorrega ao longo do muro
+    const dir = Math.sign(r.v) || 1;
+    const impact = -(fx * hit.nx + fz * hit.nz) * dir;
+    if (impact > 0) {
+      r.v *= 1 - clamp(impact, 0, 1) * 0.6 * Math.min(1, dt * 30);
+      const along = Math.atan2(hit.nz, -hit.nx);
+      const towards = Math.cos(along - r.h) > 0 ? along : along + Math.PI;
+      r.h += wrapAngle(towards - r.h) * Math.min(1, 8 * dt);
+    }
+  }
 
   const prev = r.idx;
   r.idx = nearestIdx(R.track, r.x, r.z, prev);
@@ -208,24 +228,46 @@ function move(r, dt, R) {
     r.h += wrapAngle(towards - r.h) * Math.min(1, 6 * dt);
   }
   r.s = s;
+  followGround(r, R, dt);
 }
 
-// Altura e inclinação do carro conforme o relevo da pista
-function placeOnGround(r, R) {
-  r.y = groundAt(R.track, r.x, r.z, r.idx);
-  const s = R.track.samples[r.idx];
-  r.obj.position.set(r.x, r.y, r.z);
-  r.obj.rotation.set(-Math.atan(s.slope * Math.cos(r.h - s.h)), r.h + CAR_FORWARD_OFFSET, 0, 'YXZ');
+// Mantém o carro sobre a malha da pista, sempre no nível em que ele já está
+const LEVEL_MAX = 5;   // mais longe que isso da altura do traçado, o carro perdeu o nível da pista (pacote de rede atrasado, queda)
+function followGround(r, R, dt) {
+  const level = Math.abs(r.y - r.s.p.y) > LEVEL_MAX ? r.s.p.y : r.y;
+  const hit = surfaceAt(R.track.surface, r.x, r.z, level);
+  if (hit) { r.y = hit.y; r.road = hit.road; }
+  else {
+    // fora de qualquer malha: volta devagar para a altura do traçado
+    r.road = false;
+    r.y += clamp(r.s.p.y - r.y, -6 * dt, 6 * dt);
+  }
+}
+
+// Altura e inclinação do carro: medidas embaixo das rodas, na malha real
+const PROBE_LEN = 1.6, PROBE_WID = 0.9;
+function placeOnGround(r, R, dt) {
+  const surf = R.track.surface;
+  const fx = Math.sin(r.h), fz = Math.cos(r.h);
+  const at = (a, b) => surfaceAt(surf, r.x + fx * a + fz * b, r.z + fz * a - fx * b, r.y)?.y ?? r.y;
+  const front = at(PROBE_LEN, 0), rear = at(-PROBE_LEN, 0), left = at(0, PROBE_WID), right = at(0, -PROBE_WID);
+  const k = Math.min(1, dt * 14);
+  r.pitch += (Math.atan((front - rear) / (2 * PROBE_LEN)) - r.pitch) * k;
+  r.roll += (Math.atan((left - right) / (2 * PROBE_WID)) - r.roll) * k;
+  // no topo de uma lombada a carroceria fica acima do centro; nunca abaixo do chão
+  const y = Math.max(r.y, (front + rear) / 2);
+  r.obj.position.set(r.x, y, r.z);
+  r.obj.rotation.set(-r.pitch, r.h + CAR_FORWARD_OFFSET, r.roll, 'YXZ');
 }
 
 function physPlayer(r, dt) {
-  const off = Math.abs(r.lat) > r.s.w + 0.5;
+  const off = !r.road;
   const top = off ? r.maxV * 0.5 : r.maxV;
   let a = 0;
   if (!r.finished && keys.up) a += r.accel * (1 - Math.max(0, r.v) / top);
   if (!r.finished && keys.down) a -= r.v > 0.5 ? 55 : 14;          // freia, depois dá ré
   a -= Math.sign(r.v) * (1.5 + Math.abs(r.v) * 0.012);             // atrito
-  a -= 9.8 * r.s.slope * Math.cos(r.h - r.s.h) * 0.6;               // subida tira velocidade, descida dá
+  a -= 9.8 * Math.sin(r.pitch) * 0.6;                               // subida tira velocidade, descida dá
   if (r.finished) a -= Math.sign(r.v) * 12;                         // depois da chegada, para devagar
   if (off && r.v > top) a -= 30;
   r.v = clamp(r.v + a * dt, -12, r.maxV);
@@ -250,6 +292,8 @@ function updateRemote(r, dt) {
   r.v = t.v;
   r.lap = t.lap;
   r.idx = nearestIdx(race.track, r.x, r.z, t.idx);
+  r.s = race.track.samples[r.idx];
+  followGround(r, race, dt);
   if (t.fin) r.finished = true;
 }
 
@@ -320,7 +364,7 @@ export function updateRace(dt) {
   // Outros jogadores
   for (const r of R.racers) if (!r.me) updateRemote(r, dt);
   collide(R);
-  for (const r of R.racers) placeOnGround(r, R);
+  for (const r of R.racers) placeOnGround(r, R, dt);
 
   // Envia sua posição 20 vezes por segundo
   R.sendT -= dt;
@@ -336,6 +380,9 @@ export function updateRace(dt) {
   const speedK = Math.abs(me.v) / me.maxV;
   const back = R.rear ? 9 : 10 + speedK * 2;
   const desired = new THREE.Vector3(me.x - fx * back, me.y + 3.6 + speedK * 0.6, me.z - fz * back);
+  // a câmera também não entra no chão (subidas e descidas fortes)
+  const camFloor = surfaceAt(R.track.surface, desired.x, desired.z, me.y + 2)?.y;
+  if (camFloor != null) desired.y = Math.max(desired.y, camFloor + 1.2);
   // olhando para trás o carro vem na direção da câmera: sem atraso, senão ele "encosta" na tela
   if (R.snap || R.rear) { camera.position.copy(desired); R.snap = false; }
   else camera.position.lerp(desired, 1 - Math.pow(0.0005, dt));

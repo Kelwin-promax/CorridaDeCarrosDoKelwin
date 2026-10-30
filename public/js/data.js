@@ -37,13 +37,18 @@ export const CARS = [
 
 // Pistas: modelos de public/RaceTracks e o traçado extraído por tools/track-centerline.js.
 // "scale" leva as unidades do modelo para metros do jogo (pista com ~14 m de largura).
+// road / ground / walls: materiais do modelo que são asfalto, chão fora do asfalto e muros (física em surface.js).
 export const TRACKS = [
-  { id: 'spa',    nome: 'Spa-Francorchamps', pais: 'Bélgica', ano: '1992', voltas: 2, scale: 0.21,
-    file: 'RaceTracks/circuit_de_spa-francorchamps_1992_layout.glb', data: 'tracks/spa.json' },
   { id: 'motegi', nome: 'Motegi',            pais: 'Japão',   ano: 'Twin Ring', voltas: 2, scale: 0.00145,
-    file: 'RaceTracks/mobility_resort_motegi_twin_ring.glb', data: 'tracks/motegi.json' },
+    file: 'RaceTracks/mobility_resort_motegi_twin_ring.glb', data: 'tracks/motegi.json',
+    road: /^(ROAD|RMBL|ROADGRID|SFLINE|SKID2)\.002$/,
+    ground: /^(GRASSOUT|GRVL|ROAD_OVAL|ROAD2|ROADPADDOCK|grsROADPADDOCK|ROADPITS|ROADPIT|ROADGARAGE|ROADPO1|ROADPO2)\.002$/,
+    walls: /^(WALL|GRDR01|GRDRL02|TWALLA|TIREWALLB|CONCRETEFENCE|BRICK01|BRICK02)\.002$/ },
   { id: 'hg',     nome: 'HG Circuit',        pais: 'Japão',   ano: 'Long', voltas: 4, scale: 0.95,
-    file: 'RaceTracks/penny_racers_ps2_-_hg_circuit_long.glb', data: 'tracks/hg.json' },
+    file: 'RaceTracks/penny_racers_ps2_-_hg_circuit_long.glb', data: 'tracks/hg.json',
+    road: /^(road_m|rd_01_m|rd_02_m|rd_03_m|rd_sb1_m|rd_sb2_m|road_023|line_00|grid_01|start1)$/,
+    ground: /^(sb_01_m|af_sb2_m|sand01_m|pit_flor|dodai01)$/,
+    walls: /^(gard_a|gard_b|gard_s2|gard_s3|cncr_10a|cncr_10b|cncr_10d|cncr_05|cncr3_1|tire_00|stopper2|pit_wl01|pit_wl02|pit_wl03)$/ },
 ];
 
 export const SAMPLES = 1500;     // pontos do traçado usados na física (o servidor usa o mesmo valor)
