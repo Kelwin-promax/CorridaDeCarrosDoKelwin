@@ -42,6 +42,20 @@ export const skyBg = canvasTex(16, 512, (g, w, h) => {
   g.fillStyle = gr; g.fillRect(0, 0, w, h);
 });
 
+// Noite: céu escuro e reflexos fracos nos carros (a lua vem de cima)
+export const nightBg = canvasTex(16, 512, (g, w, h) => {
+  const gr = g.createLinearGradient(0, 0, 0, h);
+  gr.addColorStop(0, '#02030a'); gr.addColorStop(0.42, '#070c1c'); gr.addColorStop(0.5, '#0e1630'); gr.addColorStop(1, '#0e1630');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+});
+const nightStudio = new THREE.Scene();
+nightStudio.background = new THREE.Color(0x05070f);
+const moonPanel = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), new THREE.MeshBasicMaterial({ color: 0x8fa6e0, side: THREE.DoubleSide }));
+moonPanel.position.set(0, 8, 0);
+moonPanel.rotation.x = Math.PI / 2;
+nightStudio.add(moonPanel);
+export const nightEnv = pmrem.fromScene(nightStudio, 0.08).texture;
+
 export const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.3, 6000);
 export const hemi = new THREE.HemisphereLight(0xdfefff, 0x3d5a2a, 0.7);
 export const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);

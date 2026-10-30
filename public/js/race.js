@@ -2,11 +2,12 @@
 import * as THREE from 'three';
 import { $, $$, clamp, wrapAngle, fmt, esc, showMsg, showLoading, LOAD_ERROR } from './util.js';
 import { CARS, SAMPLES, CAR_RADIUS, CAR_FORWARD_OFFSET, carOf } from './data.js';
-import { scene, camera, sun, hemi, skyBg, setShadowArea } from './engine.js';
+import { scene, camera, sun, setShadowArea } from './engine.js';
 import { menuRoot } from './showroom.js';
 import { spawnCar } from './cars.js';
 import { TRACK_OBJS, sampleAt, nearestIdx, gridSlot, buildTrackGroup, trackPath, strokeTrack, RUNOFF } from './tracks.js';
 import { surfaceAt, hitWalls } from './surface.js';
+import { setRaceLook, setSceneryNight, buildNight, addCarLights, updateNight } from './night.js';
 import { state, net, nav, show, goto, sendNet, onNet } from './state.js';
 
 const keys = { up: false, down: false, left: false, right: false };
@@ -27,10 +28,11 @@ addEventListener('blur', () => Object.keys(keys).forEach(k => keys[k] = false));
 
 export const trackRoot = new THREE.Group();
 scene.add(trackRoot);
-const skyFog = new THREE.Fog(0xcfe0f0, 500, 2600);
 
 export let race = null;
 let raceToken = 0;
+
+const CAM_BACK = 6.2, CAM_HEIGHT = 2.4;   // câmera atrás do carro: distância e altura, em metros
 
 // Atributos do carro na física
 const statsOf = id => carOf(id) ?? CARS[0];
@@ -107,26 +109,26 @@ async function prepareRace(m) {
 
   clearRace();
   menuRoot.visible = false;
-  scene.background = skyBg;
-  scene.fog = skyFog;
-  sun.intensity = 2.2;
-  hemi.intensity = 0.8;
+  setRaceLook(m.night);
+  setSceneryNight(built.scenery, m.night);
   setShadowArea(60);
 
   trackRoot.add(built.group);
   const R = {
-    track, laps: m.laps, lamps: built.lamps, racers: [], byId: new Map(),
+    track, laps: m.laps, lamps: built.lamps, racers: [], byId: new Map(), night: m.night ? buildNight(track, built.group, built.scenery) : null,
     phase: net.pending.countdown ? 'countdown' : 'waiting', go: net.pending.go,
     cd: 0, raceT: 0, semaT: null, over: false, snap: true, rear: false, camH: 0, boardT: 0, sendT: 0,
   };
   m.grid.forEach((g, i) => {
     trackRoot.add(objs[i]);
     const r = newRacer(g, objs[i], g.slot, track);
+    if (R.night) addCarLights(r);
     R.racers.push(r);
     R.byId.set(r.id, r);
   });
   R.me = R.racers.find(r => r.me);
   R.camH = R.me.h;
+  R.camFrom = new THREE.Vector3(R.me.x, R.me.y, R.me.z);
   race = R;
 
   // Minimapa: traçado pré-desenhado
@@ -378,22 +380,34 @@ export function updateRace(dt) {
   const dir = R.rear ? -1 : 1;
   const fx = Math.sin(R.camH) * dir, fz = Math.cos(R.camH) * dir;
   const speedK = Math.abs(me.v) / me.maxV;
-  const back = R.rear ? 9 : 10 + speedK * 2;
-  const desired = new THREE.Vector3(me.x - fx * back, me.y + 3.6 + speedK * 0.6, me.z - fz * back);
+  const back = R.rear ? 6 : CAM_BACK + speedK * 0.5;
+  const desired = new THREE.Vector3(me.x - fx * back, me.y + CAM_HEIGHT + speedK * 0.3, me.z - fz * back);
   // a câmera também não entra no chão (subidas e descidas fortes)
   const camFloor = surfaceAt(R.track.surface, desired.x, desired.z, me.y + 2)?.y;
   if (camFloor != null) desired.y = Math.max(desired.y, camFloor + 1.2);
   // olhando para trás o carro vem na direção da câmera: sem atraso, senão ele "encosta" na tela
   if (R.snap || R.rear) { camera.position.copy(desired); R.snap = false; }
-  else camera.position.lerp(desired, 1 - Math.pow(0.0005, dt));
+  else {
+    // anda junto com o carro (senão ele foge da câmera nas retas) e só suaviza as curvas
+    camera.position.x += me.x - R.camFrom.x;
+    camera.position.y += me.y - R.camFrom.y;
+    camera.position.z += me.z - R.camFrom.z;
+    camera.position.lerp(desired, 1 - Math.pow(0.0005, dt));
+  }
+  R.camFrom.set(me.x, me.y, me.z);
   const ahead = sampleAt(R.track, R.track.samples[me.idx].d + 6 * dir);
-  camera.lookAt(me.x + fx * 6, Math.max(me.y, ahead.p.y) + 1.1, me.z + fz * 6);
-  camera.fov = 50 + speedK * 12;
+  // só olha um pouco para cima nas subidas: de perto, o carro sairia da tela
+  camera.lookAt(me.x + fx * 6, me.y + 0.5 + Math.max(0, ahead.p.y - me.y) * 0.3, me.z + fz * 6);
+  camera.fov = 50 + speedK * 6;
   camera.updateProjectionMatrix();
 
   // Sombra acompanha o jogador
   sun.position.set(me.x + 60, me.y + 110, me.z + 40);
   sun.target.position.set(me.x, me.y, me.z);
+  if (R.night) {
+    R.braking = R.phase === 'running' && keys.down && me.v > 0.5;
+    updateNight(R.night, R, dt);
+  }
 
   // HUD
   const ord = order(R);

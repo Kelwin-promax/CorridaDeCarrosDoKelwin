@@ -21,6 +21,7 @@ public/
     data.js          lista de carros e pistas
     tracks.js        pistas 3D e traçado
     surface.js       física contra a malha da pista: altura do chão e muros
+    night.js         corrida noturna: céu, postes e luzes dos carros
     cars.js          carregamento dos carros
     showroom.js      palco 3D dos menus
     engine.js        renderizador, cena e luzes
@@ -57,7 +58,7 @@ Abra http://localhost:3000. Para testar o multiplayer, abra duas abas: numa dela
 
 ## Como funciona uma corrida
 
-1. Um jogador cria a sala escolhendo a pista e vira anfitrião; os outros entram pela lista de salas ou pelo código.
+1. Um jogador cria a sala escolhendo a pista e vira anfitrião; os outros entram pela lista de salas ou pelo código. Na sala, o anfitrião escolhe corrida de dia ou de noite.
 2. O anfitrião clica em **Iniciar corrida**; todos carregam a pista e os carros.
 3. Quando todos estão prontos, o semáforo acende (vermelho) e o servidor manda o **verde** ao mesmo tempo para todos.
 4. Cada jogador simula o próprio carro e envia a posição 20 vezes por segundo; o servidor repassa para a sala.

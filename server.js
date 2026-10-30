@@ -54,7 +54,7 @@ function broadcast(room, msg) {
   for (const p of room.players.values()) if (p.ws.readyState === 1) p.ws.send(s);
 }
 const roomList = () => [...rooms.values()].map(r => ({
-  code: r.code, track: r.track, count: r.players.size, phase: r.phase, host: r.players.get(r.hostId)?.name ?? '',
+  code: r.code, track: r.track, night: r.night, count: r.players.size, phase: r.phase, host: r.players.get(r.hostId)?.name ?? '',
 }));
 function broadcastRooms() {
   const s = JSON.stringify({ type: 'rooms', rooms: roomList() });
@@ -62,7 +62,7 @@ function broadcastRooms() {
 }
 function lobby(room) {
   return {
-    type: 'lobby', room: room.code, track: room.track, laps: room.laps, phase: room.phase, hostId: room.hostId,
+    type: 'lobby', room: room.code, track: room.track, laps: room.laps, night: room.night, phase: room.phase, hostId: room.hostId,
     players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, carId: p.carId, racing: p.racing })),
   };
 }
@@ -83,7 +83,7 @@ function prepareRace(room) {
     Object.assign(p, { racing: true, ready: false, finished: false, finishT: null, lap: -1, idx: 0, x: null, slot });
     return { id: p.id, name: p.name, carId: p.carId, slot };
   });
-  broadcast(room, { type: 'prepare', laps: room.laps, grid });
+  broadcast(room, { type: 'prepare', laps: room.laps, night: room.night, grid });
   broadcast(room, lobby(room));
   broadcastRooms();
   later(room, PREPARE_TIMEOUT_MS, () => beginCountdown(room));
@@ -157,7 +157,7 @@ function handle(client, m) {
       if (!CARS.has(m.carId)) return send(client.ws, { type: 'error', text: 'Carro inválido.' });
       leave(client);
       if (rooms.size >= MAX_ROOMS) return send(client.ws, { type: 'error', text: 'Muitas salas abertas. Entre numa sala existente.' });
-      const r = { code: newCode(), track: m.track, laps: TRACKS[m.track].laps, phase: 'waiting', players: new Map(), hostId: null, startAt: 0, timers: [] };
+      const r = { code: newCode(), track: m.track, laps: TRACKS[m.track].laps, night: false, phase: 'waiting', players: new Map(), hostId: null, startAt: 0, timers: [] };
       rooms.set(r.code, r);
       enter(client, r, m);
       break;
@@ -178,6 +178,13 @@ function handle(client, m) {
       break;
     case 'start':
       if (room && room.hostId === client.id && room.phase === 'waiting') prepareRace(room);
+      break;
+    case 'night':
+      if (room && room.hostId === client.id && room.phase === 'waiting') {
+        room.night = !!m.night;
+        broadcast(room, lobby(room));
+        broadcastRooms();
+      }
       break;
     case 'ready':
       if (room && room.phase === 'preparing' && client.racing) {

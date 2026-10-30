@@ -7,6 +7,7 @@ const SEARCH = 3;       // sem chão abaixo, aceita um nível até essa distânc
 const CAR_R = 1.15;     // raio do carro contra os muros
 const WALL_LOW = 0.25, WALL_HIGH = 1.4;   // faixa de altura do carro que encosta nos muros
 const LINE_CLEAR = 2.5; // muros a menos disso do traçado são enfeites do modelo, não barreiras
+const ROOF_MIN = 3, ROOF_MAX = 14, ROOF_MAX_SIZE = 200;   // o que conta como teto: altura sobre a pista e tamanho do triângulo
 
 const key = (x, z) => Math.floor(x / CELL) * 100000 + Math.floor(z / CELL);
 
@@ -105,6 +106,46 @@ export function surfaceAt(surface, x, z, y) {
   if (best != null && y - best <= SEARCH) return { y: best, road };
   if (bestAbove != null && bestAbove - y <= SEARCH) return { y: bestAbove, road: false };
   return best != null ? { y: best, road } : null;
+}
+
+// Tetos sobre a pista (túneis, pórticos): só a corrida noturna precisa, para não fincar poste através deles
+export function buildRoofs(surface, scene) {
+  const roofs = surface.roofs = new Map();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  scene.updateMatrixWorld(true);
+  scene.traverse(o => {
+    if (!o.isMesh) return;
+    const pos = o.geometry.attributes.position, idx = o.geometry.index;
+    const count = idx ? idx.count : pos.count;
+    for (let t = 0; t < count; t += 3) {
+      a.fromBufferAttribute(pos, idx ? idx.getX(t) : t).applyMatrix4(o.matrixWorld);
+      b.fromBufferAttribute(pos, idx ? idx.getX(t + 1) : t + 1).applyMatrix4(o.matrixWorld);
+      c.fromBufferAttribute(pos, idx ? idx.getX(t + 2) : t + 2).applyMatrix4(o.matrixWorld);
+      const xa = Math.min(a.x, b.x, c.x), xb = Math.max(a.x, b.x, c.x), za = Math.min(a.z, b.z, c.z), zb = Math.max(a.z, b.z, c.z);
+      if (xb - xa > ROOF_MAX_SIZE || zb - za > ROOF_MAX_SIZE) continue;
+      const ny = (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z);
+      const nx = (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y);
+      const nz = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+      if (Math.abs(ny) / (Math.hypot(nx, ny, nz) || 1) < 0.5) continue;
+      addToGrid(roofs, { ax: a.x, ay: a.y, az: a.z, bx: b.x, by: b.y, bz: b.z, cx: c.x, cy: c.y, cz: c.z }, xa, xb, za, zb);
+    }
+  });
+}
+
+// Altura do teto mais baixo acima de quem está em y; null se o céu está aberto
+export function roofAt(surface, x, z, y) {
+  let best = null;
+  for (const t of surface.roofs.get(key(x, z)) ?? []) {
+    const det = (t.bz - t.cz) * (t.ax - t.cx) + (t.cx - t.bx) * (t.az - t.cz);
+    if (Math.abs(det) < 1e-9) continue;
+    const w0 = ((t.bz - t.cz) * (x - t.cx) + (t.cx - t.bx) * (z - t.cz)) / det;
+    const w1 = ((t.cz - t.az) * (x - t.cx) + (t.ax - t.cx) * (z - t.cz)) / det;
+    const w2 = 1 - w0 - w1;
+    if (w0 < -1e-4 || w1 < -1e-4 || w2 < -1e-4) continue;
+    const h = w0 * t.ay + w1 * t.by + w2 * t.cy;
+    if (h > y + ROOF_MIN && h < y + ROOF_MAX && (best == null || h < best)) best = h;
+  }
+  return best;
 }
 
 // Empurra o carro para fora dos muros; devolve a normal da batida, se houve

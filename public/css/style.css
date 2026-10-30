@@ -212,6 +212,13 @@ input#playerName:focus, #joinCode:focus { border-color:var(--acc); box-shadow:0 
 .lb-track h2 { font-size:34px; }
 #lbMap { width:100%; height:auto; margin:12px 0; border-radius:10px; background:radial-gradient(ellipse at center,#1d1f2a,#0b0c11); }
 .lb-facts { display:flex; justify-content:space-between; gap:12px; padding:0 4px 14px; border-bottom:1px solid var(--line); }
+.lb-mode { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 4px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.lb-mode small { color:var(--mut); font-size:11px; letter-spacing:.15em; text-transform:uppercase; font-weight:700; }
+.lb-seg { display:flex; gap:6px; }
+.lb-seg .chip:disabled { cursor:default; opacity:.55; }
+.lb-seg .chip:disabled:hover { background:rgba(255,255,255,.08); }
+.lb-seg .chip.on:disabled { opacity:1; }
+.lb-seg .chip.on:disabled:hover { background:var(--acc); }
 .lb-code { display:flex; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap; }
 .lb-code small { width:100%; color:var(--mut); font-size:11px; letter-spacing:.2em; text-transform:uppercase; font-weight:700; }
 .lb-code b { font-weight:900; font-size:40px; letter-spacing:.3em; line-height:1; color:#fff; text-shadow:0 0 18px rgba(255,59,48,.6); }

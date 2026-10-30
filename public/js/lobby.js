@@ -1,5 +1,5 @@
 // Salas: criar, entrar e a sala de espera antes da largada
-import { $, esc, pad2, showMsg } from './util.js';
+import { $, $$, esc, pad2, showMsg } from './util.js';
 import { carName, thumbOf } from './data.js';
 import { state, net, goto, nav, sendNet, onNet } from './state.js';
 import { TRACK_OBJS, drawPreview } from './tracks.js';
@@ -72,6 +72,12 @@ export function renderLobby() {
     <div><b>${(t.length / 1000).toFixed(2)}</b><small>km</small></div>
     <div><b>${t.curves}</b><small>curvas</small></div>
     <div><b>${L?.laps ?? t.laps}</b><small>voltas</small></div>` : '';
+  // só o anfitrião escolhe; os outros veem o que foi escolhido
+  const canChoose = L?.hostId === net.id && L.phase === 'waiting';
+  $$('#lbMode .chip').forEach(b => {
+    b.classList.toggle('on', (b.dataset.night === '1') === !!L?.night);
+    b.disabled = !canChoose;
+  });
   if (!L) {
     $('#lbSub').innerHTML = '<span class="dots">Entrando na sala</span>';
     $('#lbPlayers').innerHTML = '';
@@ -106,6 +112,7 @@ export function renderLobby() {
 
 export function initLobby() {
   $('#btnStart').addEventListener('click', () => sendNet({ type: 'start' }));
+  $$('#lbMode .chip').forEach(b => b.addEventListener('click', () => sendNet({ type: 'night', night: b.dataset.night === '1' })));
   $('#btnLeave').addEventListener('click', () => leaveRoom());
   $('#btnCopy').addEventListener('click', async () => {
     if (!state.room) return;

@@ -239,7 +239,7 @@ function renderRoomList() {
     const full = r.count >= 8;
     return `<button class="ritem" data-code="${esc(r.code)}" ${full ? 'disabled' : ''}>
       <canvas width="160" height="100" data-track="${esc(r.track)}"></canvas>
-      <div class="ri-main"><b>${esc(t?.nome ?? r.track)}</b><small>Anfitrião: ${esc(r.host)}</small></div>
+      <div class="ri-main"><b>${esc(t?.nome ?? r.track)}</b><small>${r.night ? 'Noturna · ' : ''}Anfitrião: ${esc(r.host)}</small></div>
       <div class="ri-code">${esc(r.code)}</div>
       <div class="ri-count">${r.count}<small>/8</small></div>
       <div class="ri-state ${r.phase === 'waiting' ? 'ok' : ''}">${full ? 'Cheia' : r.phase === 'waiting' ? 'Aguardando' : 'Correndo'}</div>

@@ -1,6 +1,6 @@
 // Showroom 3D dos menus: o carro escolhido num palco com luzes, e a câmera de cada tela
 import * as THREE from 'three';
-import { scene, camera, sun, hemi, studioBg, canvasTex, setShadowArea } from './engine.js';
+import { scene, camera, sun, hemi, studioBg, envMap, canvasTex, setShadowArea } from './engine.js';
 
 export const menuRoot = new THREE.Group();
 const floorTex = canvasTex(1024, 1024, (g, w, h) => {
@@ -64,7 +64,9 @@ export function setView(name) { view = VIEWS[name] ?? VIEWS.lobby; }
 export function enterMenuLook() {
   menuRoot.visible = true;
   scene.background = studioBg;
+  scene.environment = envMap;
   scene.fog = null;
+  sun.color.set(0xfff4e0);
   sun.intensity = 0.6;
   hemi.intensity = 0.35;
   sun.position.set(6, 14, 8);

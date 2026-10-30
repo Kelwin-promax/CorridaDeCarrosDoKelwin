@@ -168,6 +168,13 @@ const SCREENS = `
       <h2 id="lbTitle"></h2>
       <canvas id="lbMap" width="520" height="360"></canvas>
       <div class="lb-facts" id="lbFacts"></div>
+      <div class="lb-mode">
+        <small>Horário da corrida</small>
+        <div class="lb-seg" id="lbMode">
+          <button class="chip" data-night="0">Dia</button>
+          <button class="chip" data-night="1">Noite</button>
+        </div>
+      </div>
       <div class="lb-code">
         <small>Código da sala</small>
         <b id="lbCode">----</b>

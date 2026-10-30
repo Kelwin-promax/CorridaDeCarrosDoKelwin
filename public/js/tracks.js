@@ -106,7 +106,8 @@ const grassTex = canvasTex(256, 256, (g, w, h) => {
 export async function buildTrackGroup(track, onProgress) {
   const S = track.samples;
   const g = new THREE.Group();
-  g.add(await loadTrackScene(track, onProgress));
+  const scenery = await loadTrackScene(track, onProgress);
+  g.add(scenery);
 
   let minY = Infinity;
   for (const s of S) minY = Math.min(minY, s.p.y);
@@ -152,7 +153,7 @@ export async function buildTrackGroup(track, onProgress) {
   gantry.rotation.y = h;
   g.add(gantry);
 
-  return { group: g, lamps };
+  return { group: g, lamps, scenery };
 }
 
 // ---------- Desenho 2D do traçado (cartões e minimapa) ----------
